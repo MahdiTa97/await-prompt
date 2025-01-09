@@ -20,6 +20,7 @@
   ],
   "scripts": {
     "build": "tsup index.tsx --format cjs,esm --dts",
+    "change": "pnpm changeset",
     "release": "pnpm run build && changeset publish",
     "lint": "tsc"
   },
