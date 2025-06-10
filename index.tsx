@@ -10,7 +10,13 @@ import {
   useMemo,
   useRef,
   useState,
+  useCallback,
 } from 'react'
+
+interface Slot {
+  id: string
+  jsx: JSX.Element
+}
 
 interface PromptContext {
   allocSlot(getJsx: (id: string) => JSX.Element): string
@@ -28,22 +34,24 @@ export const PromptProvider: FC<PromptContextProviderProps> = ({
 }) => {
   const [slots, setSlots] = useState<Slot[]>([])
   const lastId = useRef(0)
+
+  const allocSlot = useCallback((getJsx: (id: string) => JSX.Element) => {
+    const id = 'p' + lastId.current++
+    setSlots(prev => [...prev, { id, jsx: getJsx(id) }])
+    return id
+  }, [])
+
+  const deleteSlot = useCallback((id: string) => {
+    setSlots(prev => prev.filter(s => s.id !== id))
+  }, [])
+
+  const contextValue = useMemo(
+    () => ({ allocSlot, deleteSlot }),
+    [allocSlot, deleteSlot]
+  )
+
   return (
-    <PromptContext.Provider
-      value={useMemo(
-        () => ({
-          allocSlot(getJsx) {
-            const id = 'p' + lastId.current++
-            setSlots([...slots, { id, jsx: getJsx(id) }])
-            return id
-          },
-          deleteSlot(id) {
-            setSlots(slots.filter(s => s.id !== id))
-          },
-        }),
-        [slots, setSlots]
-      )}
-    >
+    <PromptContext.Provider value={contextValue}>
       {children}
       {slots.map(({ id, jsx }) => (
         <Fragment key={id}>{jsx}</Fragment>
@@ -52,24 +60,36 @@ export const PromptProvider: FC<PromptContextProviderProps> = ({
   )
 }
 
-interface Slot {
-  id: string
-  jsx: JSX.Element
+export interface PromptComponentProps<ResolvesWith, RejectsWith, Variables> {
+  resolve(v: ResolvesWith): void
+  reject(v: RejectsWith): void
+  variables: Variables
 }
+
+export type PromptComponent<ResolvesWith, RejectsWith, Variables> = FC<
+  PromptComponentProps<ResolvesWith, RejectsWith, Variables>
+>
 
 export default function usePrompt<ResolvesWith, RejectsWith, Variables>(
   PromptComponent: PromptComponent<ResolvesWith, RejectsWith, Variables>
 ) {
-  const { allocSlot, deleteSlot } = useContext(PromptContext) ?? {}
+  const context = useContext(PromptContext)
+
+  if (!context) {
+    throw new Error('usePrompt must be used within a PromptProvider')
+  }
+
+  const { allocSlot, deleteSlot } = context
+
   return useMemo(
     () => ({
       prompt: async (variables: Variables): Promise<ResolvesWith> =>
         new Promise((resolve, reject) => {
-          allocSlot?.(id => {
-            const close = () => deleteSlot?.(id)
+          const id = allocSlot(id => {
+            const close = () => deleteSlot(id)
             return (
               <PromptComponent
-                {...{ variables }}
+                variables={variables}
                 resolve={value => {
                   close()
                   resolve(value)
@@ -86,13 +106,3 @@ export default function usePrompt<ResolvesWith, RejectsWith, Variables>(
     [PromptComponent, allocSlot, deleteSlot]
   )
 }
-
-export interface PromptComponentProps<ResolvesWith, RejectsWith, Variables> {
-  resolve(v: ResolvesWith): void
-  reject(v: RejectsWith): void
-  variables: Variables
-}
-
-export type PromptComponent<ResolvesWith, RejectsWith, Variables> = FC<
-  PromptComponentProps<ResolvesWith, RejectsWith, Variables>
->
